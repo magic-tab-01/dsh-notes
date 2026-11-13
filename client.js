@@ -583,8 +583,11 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
 .dshn-editor-surface{flex:1;overflow-y:auto;min-height:0}
 .dshn-content{min-height:100%;outline:none;padding:28px 36px 56px;font-size:16px;line-height:1.75}
 .dshn-content h1{font-size:30px;font-weight:700;margin:.6em 0 .35em;line-height:1.3}
-.dshn-content h2{font-size:24px;font-weight:700;margin:.55em 0 .3em;line-height:1.3}
-.dshn-content h3{font-size:19px;font-weight:600;margin:.5em 0 .28em;line-height:1.3}
+.dshn-content h2{font-size:24px;font-weight:700;margin:.55em 0 .3em 20px;line-height:1.3}
+.dshn-content h3{font-size:19px;font-weight:600;margin:.5em 0 .28em 40px;line-height:1.3}
+.dshn-content h4{font-size:16px;font-weight:600;margin:.45em 0 .26em 60px;line-height:1.3}
+.dshn-content h5{font-size:14px;font-weight:600;margin:.4em 0 .24em 80px;line-height:1.3}
+.dshn-content h6{font-size:13px;font-weight:600;margin:.4em 0 .22em 100px;line-height:1.3}
 .dshn-content p{margin:.55em 0}
 .dshn-content blockquote{border-left:3px solid var(--dshn-accent);margin:.75em 0;padding:8px 16px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);border-radius:0 8px 8px 0}
 .dshn-content a{color:var(--dsw-alias-link);text-decoration:none;border-bottom:1px solid transparent;transition:border-color .12s ease}
@@ -871,6 +874,8 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
       }
 
       function runCommand(cmd, value) {
+        // 先抓当前实时选区，覆盖可能过期的 savedRange——否则点工具栏时选区已变，formatBlock 会作用到错误位置或直接失败
+        saveSelection();
         restoreSelection();
         stripFoldToggles();
         document.execCommand(cmd, false, value);
@@ -881,6 +886,7 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
 
       /** 像素级字号：选区包裹 <span style="font-size">；空选区插入零宽占位 span 并定位光标（后续输入同字号） */
       function applyFontSize(px) {
+        saveSelection();
         restoreSelection();
         const sel = window.getSelection();
         if (!sel || sel.rangeCount === 0 || !editorRef.current) return;
@@ -893,7 +899,14 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
           range.setStart(span.firstChild, 1);
           range.collapse(true);
         } else {
-          const fragment = range.extractContents();
+          let fragment;
+          try {
+            fragment = range.extractContents();
+          } catch (_e) {
+            return; // 复杂跨块选区无法提取：放弃本次设置，避免破坏内容
+          }
+          // 清掉选区里已有的字号样式，让新字号统一生效（否则内层 font-size span 会覆盖外层）
+          fragment.querySelectorAll('*').forEach((el) => { el.style.fontSize = ''; });
           span.appendChild(fragment);
           range.insertNode(span);
           range.selectNodeContents(span);
