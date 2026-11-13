@@ -978,16 +978,28 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
       }
 
       function onPaste(e) {
-        const items = e.clipboardData && e.clipboardData.items;
-        if (!items) return;
-        for (let i = 0; i < items.length; i++) {
-          const item = items[i];
-          if (item.type && item.type.indexOf('image/') === 0) {
-            e.preventDefault();
-            const file = item.getAsFile();
-            if (file) readImageAsDataUrl(file, (dataUrl) => { runCommand('insertImage', dataUrl); });
-            break;
+        const cd = e.clipboardData;
+        if (!cd) return;
+        // 图片优先：粘贴图片走压缩插入
+        const items = cd.items;
+        if (items) {
+          for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.type && item.type.indexOf('image/') === 0) {
+              e.preventDefault();
+              const file = item.getAsFile();
+              if (file) readImageAsDataUrl(file, (dataUrl) => { runCommand('insertImage', dataUrl); });
+              return;
+            }
           }
+        }
+        // 其余一律纯文本粘贴，去掉所有格式
+        const text = cd.getData('text/plain');
+        if (text) {
+          e.preventDefault();
+          document.execCommand('insertText', false, text);
+          saveSelection();
+          commitHtml();
         }
       }
 
