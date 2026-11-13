@@ -17,6 +17,7 @@ window.__ModuleLoader__.load({
     const PANEL_ID = 'notes';
     const NS = 'dshNotes';
     const STORAGE_KEY = 'dsh-notes:v1';
+    let uiWorkspaceRef = null;
 
     // ---- dictionaries -----------------------------------------------------
 
@@ -41,6 +42,9 @@ window.__ModuleLoader__.load({
       background: 'Background',
       export: 'Export',
       clearFormat: 'Clear formatting',
+      copy: 'Copy',
+      addToNote: 'Add to note',
+      sourceFrom: 'From session',
       fontColor: 'Text color', highlight: 'Highlight', fontSize: 'Font size',
       linkUrl: 'Link URL', linkPlaceholder: 'https://example.com', apply: 'Apply', cancel: 'Cancel',
       'bg.default': 'Default', 'bg.white': 'White', 'bg.paper': 'Paper', 'bg.cream': 'Cream',
@@ -75,6 +79,9 @@ window.__ModuleLoader__.load({
       background: '背景',
       export: '导出',
       clearFormat: '清除格式',
+      copy: '复制',
+      addToNote: '添加到笔记',
+      sourceFrom: '来自会话',
       fontColor: '字体颜色', highlight: '高亮', fontSize: '字号',
       linkUrl: '链接地址', linkPlaceholder: 'https://example.com', apply: '确定', cancel: '取消',
       'bg.default': '默认', 'bg.white': '白色', 'bg.paper': '纸张', 'bg.cream': '米色',
@@ -128,6 +135,7 @@ window.__ModuleLoader__.load({
         html: n.html || '',
         preview: n.preview != null ? n.preview : stripHtml(n.html || ''),
         categoryId: n.categoryId || null,
+        source: n.source || null,
         createdAt: n.createdAt || Date.now(),
         updatedAt: n.updatedAt || Date.now(),
       };
@@ -191,6 +199,43 @@ window.__ModuleLoader__.load({
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       } catch (_e) { /* quota exceeded (large images) or storage unavailable */ }
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    /** 从会话选中文字新建一条笔记（跨插件：直接写 localStorage，再广播让笔记面板重载） */
+    function appendSessionNote(text, sessionId, sessionTitle) {
+      try {
+        const plain = String(text || '').trim();
+        if (!plain) return;
+        const raw = localStorage.getItem(STORAGE_KEY);
+        const data = raw ? JSON.parse(raw) : { notes: [], categories: [], background: 'default' };
+        const notes = Array.isArray(data.notes) ? data.notes : [];
+        const now = Date.now();
+        const sourceLink = sessionId
+          ? '<p><a href="#" data-session-id="' + escapeHtml(String(sessionId)) + '">🔗 ' + escapeHtml(sessionTitle || String(sessionId)) + '</a></p>'
+          : '';
+        const note = {
+          id: uid(),
+          title: plain.replace(/\s+/g, ' ').slice(0, 40) || '会话摘录',
+          html: sourceLink + plain.split('\n').map((line) => '<p>' + escapeHtml(line) + '</p>').join(''),
+          preview: plain.replace(/\s+/g, ' ').slice(0, 120),
+          categoryId: null,
+          source: { type: 'session', sessionId: sessionId || null, sessionTitle: sessionTitle || '', capturedAt: now },
+          createdAt: now,
+          updatedAt: now,
+        };
+        notes.unshift(note);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...data, notes }));
+        window.dispatchEvent(new CustomEvent('dsh-notes:changed'));
+      } catch (_e) { /* quota or storage unavailable */ }
     }
 
     /** 两级分类树（纯函数）：parentId 为 null 或悬空 → 根 */
@@ -579,6 +624,9 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
 .dshn-note.is-active::before{content:"";position:absolute;left:-1px;top:12px;bottom:12px;width:3px;border-radius:2px;background:var(--dshn-accent)}
 .dshn-note-title{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4}
 .dshn-note-preview{font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;line-height:1.4}
+.dshn-note-source{font-size:11px;color:var(--dsw-alias-link);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;display:block;max-width:100%;background:none;border:none;padding:0;cursor:pointer;text-align:left;font-family:inherit}
+.dshn-note-source:hover{text-decoration:underline}
+.dshn-content a[data-session-id]{text-decoration:underline;cursor:pointer}
 .dshn-note-meta{display:flex;align-items:center;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .dshn-note-del{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:none;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:15px;line-height:1;border-radius:6px;opacity:0;transition:opacity .12s ease,background .12s ease,color .12s ease}
 .dshn-note:hover .dshn-note-del,.dshn-note:focus-within .dshn-note-del{opacity:1}
@@ -652,6 +700,11 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
   .dshn-list{width:100%;max-height:40%;border-right:none;border-bottom:1px solid var(--dsw-alias-border-l1)}
 }
 `;
+
+    // 会话区右键浮层样式：AddToNoteAction 渲染在会话区（NotesApp 之外），须全局注入
+    const INTERACTION_CSS = '.dshn-add-note-actions{display:flex;flex-direction:column;gap:4px;align-items:stretch}'
+      + '.dshn-add-note-action{padding:5px 12px;border:none;border-radius:10px;text-align:left;background:var(--dsw-alias-button-floating-fill);box-shadow:var(--dsw-elevation-panel);color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13);cursor:pointer}'
+      + '.dshn-add-note-action:hover{background:var(--dsw-alias-button-floating-hover)}';
 
     // ---- glyphs -----------------------------------------------------------
 
@@ -806,6 +859,19 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
         window.addEventListener('beforeunload', onBeforeUnload);
         return () => window.removeEventListener('beforeunload', onBeforeUnload);
       }, [notes, categories, background]);
+
+      useEffect(() => {
+        const onChanged = () => {
+          const d = loadData();
+          setData({
+            notes: d.notes.map(normalizeNote),
+            categories: d.categories.map(normalizeCategory),
+            background: normalizeBg(d.background),
+          });
+        };
+        window.addEventListener('dsh-notes:changed', onChanged);
+        return () => window.removeEventListener('dsh-notes:changed', onChanged);
+      }, []);
 
       useEffect(() => {
         if (activeId === null && notes.length) setActiveId(notes[0].id);
@@ -977,6 +1043,18 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
             saveSelection();
             commitHtml();
           }
+        }
+      }
+
+      function onEditorClick(e) {
+        const target = e.target;
+        const a = target && target.closest ? target.closest('a[data-session-id]') : null;
+        if (!a) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const sid = a.getAttribute('data-session-id');
+        if (sid && uiWorkspaceRef) {
+          try { uiWorkspaceRef.openSession(sid); } catch (_err) { /* 会话已归档或删除 */ }
         }
       }
 
@@ -1332,6 +1410,17 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
                 onClick: () => selectNote(n.id),
               },
               h('div', { className: 'dshn-note-title' }, n.title || t('untitled')),
+              n.source ? h('button', {
+                type: 'button',
+                className: 'dshn-note-source',
+                title: t('sourceFrom'),
+                onClick: (e) => {
+                  e.stopPropagation();
+                  try {
+                    if (n.source.sessionId && uiWorkspaceRef) uiWorkspaceRef.openSession(n.source.sessionId);
+                  } catch (_err) { /* 会话可能已归档或删除 */ }
+                },
+              }, t('sourceFrom') + '：' + (n.source.sessionTitle || n.source.sessionId || '')) : null,
               h('div', { className: 'dshn-note-preview' }, n.preview || ''),
               h('div', { className: 'dshn-note-meta' },
                 h('span', null, formatRelativeTime(n.updatedAt)),
@@ -1375,6 +1464,7 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
               onKeyDown: onEditorKeyDown,
               onKeyUp: saveSelection,
               onMouseUp: saveSelection,
+              onClick: onEditorClick,
             })),
           h('input', { type: 'file', ref: fileInputRef, accept: 'image/*', style: { display: 'none' }, onChange: onImageFile }));
       }
@@ -1386,17 +1476,60 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
         h('div', { className: 'dshn-body' }, listPane(), editorPane()));
     }
 
+    // ---- right-click "add to note" interaction ----------------------------
+
+    function AddToNoteAction({ dismiss, readText, clearSelection, sessionId, useSession, t }) {
+      const sourceTitle = useSession((s) => (s && s.title ? s.title : ''));
+      const copyText = () => {
+        const text = readText();
+        if (text === null || text === '') { dismiss(); return; }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(() => {});
+        }
+        dismiss();
+      };
+      const addNote = () => {
+        const text = readText();
+        if (text === null || text === '') { dismiss(); return; }
+        appendSessionNote(text, sessionId, sourceTitle);
+        clearSelection();
+        dismiss();
+      };
+      return h('div', { className: 'dshn-add-note-actions' },
+        h('button', { type: 'button', className: 'dshn-add-note-action', onPointerDown: (e) => e.preventDefault(), onClick: copyText }, t ? t('copy') : '复制'),
+        h('button', { type: 'button', className: 'dshn-add-note-action', onPointerDown: (e) => e.preventDefault(), onClick: addNote }, t ? t('addToNote') : '添加到笔记'));
+    }
+
     // ---- plugin entry -----------------------------------------------------
 
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'uiConversation', 'uiWorkspace'],
       apply(ctx) {
+        uiWorkspaceRef = ctx.uiWorkspace || null;
         ctx.effect(() => ctx.locale.register(NS, { en: EN, zh: ZH }), 'dsh-notes: dictionaries');
+        ctx.effect(() => {
+          const el = document.createElement('style');
+          el.textContent = INTERACTION_CSS;
+          document.head.appendChild(el);
+          return () => el.remove();
+        }, 'dsh-notes: interaction styles');
         const t = ctx.locale.bind(NS);
         ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS }, NotesApp));
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => t('panel'), locale: NS,
         }, NotesIcon));
+        ctx.effect(() => ctx.uiConversation.interactions.register({
+          id: 'note',
+          onInteraction(request) {
+            if (request.trigger !== 'contextmenu') return;
+            if (request.readText() === null) return;
+            request.open();
+            request.preventDefault();
+          },
+        }), 'dsh-notes: add-to-note interaction');
+        ctx.slots.inject('conversation.chat.text-interaction', () => ctx.slots.register({
+          name: 'conversation.chat.text-interaction', key: 'note', locale: NS,
+        }, AddToNoteAction));
       },
     };
   },
