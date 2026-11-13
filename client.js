@@ -953,6 +953,19 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
         syncFoldToggles();
       }
 
+      function onEditorKeyDown(e) {
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          e.stopPropagation();
+          if (editorRef.current) {
+            // 用 4 个不换行空格，避免普通空格在 HTML 里折叠成一个
+            document.execCommand('insertText', false, '\u00A0\u00A0\u00A0\u00A0');
+            saveSelection();
+            commitHtml();
+          }
+        }
+      }
+
       function pickImage() {
         if (fileInputRef.current) fileInputRef.current.click();
       }
@@ -1333,6 +1346,7 @@ button.dshn-cat-toggle:hover{background:var(--dsw-alias-bg-overlay);color:var(--
               style: { background: bg.css, color: bg.color },
               onInput: onEditorInput,
               onPaste: onPaste,
+              onKeyDown: onEditorKeyDown,
               onKeyUp: saveSelection,
               onMouseUp: saveSelection,
             })),
